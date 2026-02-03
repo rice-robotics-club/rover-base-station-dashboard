@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ROVER — Live Feed</title>
+<style>
+  /* ------------------------------------------------------------------ */
+  /*  Design direction: industrial telemetry / mission-control aesthetic  */
+  /*  Monospace type, scanline texture, amber accent on dark ground.     */
+  /* ------------------------------------------------------------------ */
+
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg-deep:     #0a0e14;
+    --bg-panel:    #111820;
+    --bg-inset:    #0d1117;
+    --border:      #1e2a3a;
+    --accent:      #e8a025;
+    --accent-dim:  #a07018;
+    --text-primary:#d4dce8;
+    --text-dim:    #5a6a7a;
+    --status-on:   #3ddc84;
+    --status-off:  #e04848;
+    --font-mono:   'Share Tech Mono', 'Courier New', monospace;
+    --font-ui:     'Rajdhani', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    overflow: hidden;                       /* full-viewport layout */
+  }
+
+  /* ---- scanline overlay (pure CSS — no image needed) -------------------- */
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent 0px,
+      transparent 2px,
+      rgba(0,0,0,.15) 2px,
+      rgba(0,0,0,.15) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  /* ---- layout grid ------------------------------------------------------ */
+  .layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    grid-template-rows: 48px 1fr;
+    height: 100vh;
+    gap: 1px;
+    background: var(--border);              /* the 1px gaps show as borders */
+  }
+
+  /* ---- top bar ---------------------------------------------------------- */
+  .topbar {
+    grid-column: 1 / -1;
+    background: var(--bg-panel);
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    gap: 16px;
+  }
+  .topbar .logo-mark {
+    width: 28px; height: 28px;
+    border: 2px solid var(--accent);
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 1px;
+  }
+  .topbar h1 {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--text-primary);
+  }
+  .topbar .spacer { flex: 1; }
+  .topbar .clock {
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+  }
+
+  /* ---- sidebar (telemetry panel) --------------------------------------- */
+  .sidebar {
+    background: var(--bg-panel);
+    padding: 20px 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .sidebar-section-title {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* status row: label + dot + value */
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 12px;
+  }
+  .status-row .label {
+    color: var(--text-dim);
+    width: 90px;
+    flex-shrink: 0;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--status-off);
+    transition: background .3s;
+  }
+  .status-dot.on { background: var(--status-on); box-shadow: 0 0 6px var(--status-on); }
+  .status-row .value {
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  /* log terminal */
+  .log-box {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    height: 140px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--text-dim);
+  }
+  .log-box .log-line { margin-bottom: 2px; }
+  .log-box .log-line .ts { color: var(--accent-dim); margin-right: 6px; }
+  .log-box .log-line .ok { color: var(--status-on); }
+  .log-box .log-line .warn { color: var(--accent); }
+  .log-box .log-line .err { color: var(--status-off); }
+
+  /* ---- main video area -------------------------------------------------- */
+  .main {
+    background: var(--bg-deep);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* faint corner brackets */
+  .main::before, .main::after {
+    content: '';
+    position: absolute;
+    width: 40px; height: 40px;
+    border-color: var(--accent-dim);
+    border-style: solid;
+    opacity: .35;
+    pointer-events: none;
+  }
+  .main::before { top: 16px; left: 16px; border-width: 2px 0 0 2px; }
+  .main::after  { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
+
+  .video-wrapper {
+    position: relative;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: #000;
+    /* subtle amber glow when connected */
+    transition: box-shadow .4s;
+  }
+  .video-wrapper.connected {
+    box-shadow: 0 0 24px rgba(232,160,37,.15);
+  }
+
+  video {
+    display: block;
+    width: 100%;
+    max-width: 960px;
+    max-height: 70vh;
+    background: #000;
+  }
+
+  /* placeholder shown before stream arrives */
+  .no-signal {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px;
+    background: rgba(10,14,20,.92);
+    transition: opacity .4s;
+    z-index: 2;
+  }
+  .no-signal.hidden { opacity: 0; pointer-events: none; }
+  .no-signal .icon { font-size: 48px; opacity: .4; }
+  .no-signal span {
+    font-family: var(--font-ui);
+    font-size: 15px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* OSD stamp on video */
+  .osd {
+    position: absolute;
+    bottom: 12px; left: 16px;
+    font-size: 11px;
+    color: rgba(212,220,232,.7);
+    text-shadow: 0 1px 3px rgba(0,0,0,.8);
+    pointer-events: none;
+    z-index: 3;
+  }
+  .osd .live-badge {
+    display: inline-block;
+    background: var(--status-off);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* ---- connect button --------------------------------------------------- */
+  .btn-connect {
+    margin-top: 20px;
+    font-family: var(--font-ui);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 8px 28px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background .2s, color .2s;
+  }
+  .btn-connect:hover {
+    background: var(--accent);
+    color: var(--bg-deep);
+  }
+  .btn-connect:disabled {
+    opacity: .35;
+    cursor: default;
+  }
+</style>
+</head>
+<body>
+
+<!-- ====================================================================
+     LAYOUT
+     ==================================================================== -->
+<div class="layout">
+
+  <!-- top bar -->
+  <div class="topbar">
+    <div class="logo-mark">R</div>
+    <h1>Rover Telemetry</h1>
+    <div class="spacer"></div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+
+  <!-- sidebar -->
+  <aside class="sidebar">
+    <div>
+      <div class="sidebar-section-title">Connection</div>
+      <div class="status-row">
+        <span class="label">WebSocket</span>
+        <span class="status-dot" id="dot-ws"></span>
+        <span class="value" id="val-ws">disconnected</span>
+      </div>
+      <div class="status-row">
+        <span class="label">ICE</span>
+        <span class="status-dot" id="dot-ice"></span>
+        <span class="value" id="val-ice">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label">Video</span>
+        <span class="status-dot" id="dot-vid"></span>
+        <span class="value" id="val-vid">no signal</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="sidebar-section-title">Stream Info</div>
+      <div class="status-row">
+        <span class="label">Resolution</span>
+        <span class="value" id="val-res">—</span>
+      </div>
+      <div class="status-row">
+        <span class="label">Codec</span>
+        <span class="value">H.264</span>
+      </div>
+      <div class="status-row">
+        <span class="label">Transport</span>
+        <span class="value">WebRTC / UDP</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="sidebar-section-title">Event Log</div>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </aside>
+
+  <!-- main video area -->
+  <main class="main">
+    <div class="video-wrapper" id="video-wrapper">
+      <video id="video" autoplay playsinline muted></video>
+      <div class="no-signal" id="no-signal">
+        <div class="icon">⬡</div>
+        <span>Awaiting signal</span>
+      </div>
+      <div class="osd" id="osd" style="display:none;">
+        <span class="live-badge">LIVE</span>
+        <span id="osd-time"></span>
+      </div>
+    </div>
+    <button class="btn-connect" id="btn-connect" onclick="startConnection()">Connect</button>
+  </main>
+</div>
+
+<!-- ====================================================================
+     JAVASCRIPT — WebRTC consumer + signaling client
+     ====================================================================
+     What this code does (step by step):
+
+     1. Opens a WebSocket to the signaling server (/ws).
+     2. Creates a local RTCPeerConnection (the browser's WebRTC engine).
+     3. Waits for the GStreamer sender to push an SDP "offer" through the
+        WebSocket.
+     4. Sets that offer as the REMOTE description on our peer connection.
+     5. Creates an SDP "answer" and sets it as OUR local description.
+     6. Sends the answer back through the WebSocket to GStreamer.
+     7. ICE candidates flow both ways through the WebSocket until a
+        working network path is found.
+     8. Once the peer connection is established, the browser receives an
+        RTP video track which we attach to the <video> element.
+
+     Why does the browser create an ANSWER (not an offer)?
+        In WebRTC there are two roles: "offerer" and "answerer".
+        GStreamer is the offerer because it has the media.  The browser
+        is the answerer — it accepts the offer and replies.
+        The roles determine how the SDP is structured and how DTLS
+        roles are assigned.  It doesn't matter for functionality; it's
+        a protocol convention.
+     ==================================================================== -->
+<script>
+(function () {
+  "use strict";
+
+  // ---------- references to DOM elements ----------
+  const video      = document.getElementById("video");
+  const noSignal   = document.getElementById("no-signal");
+  const osd        = document.getElementById("osd");
+  const osdTime    = document.getElementById("osd-time");
+  const wrapper    = document.getElementById("video-wrapper");
+  const btnConnect = document.getElementById("btn-connect");
+  const logBox     = document.getElementById("log-box");
+
+  // ---------- state ----------
+  let ws = null;                              // WebSocket connection
+  let pc = null;                              // RTCPeerConnection
+
+  // ---------- clock (top-right) ----------
+  (function tickClock() {
+    document.getElementById("clock").textContent =
+      new Date().toLocaleTimeString("en-GB", { hour12: false });
+    setInterval(tickClock, 1000);
+  })();
+
+  // ---------- logging helper -----------------------------------------------
+  // Appends a line to the on-screen log AND prints to the browser console.
+  function log(msg, level = "ok") {
+    console.log(`[ROVER] ${msg}`);
+    const ts   = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const line = document.createElement("div");
+    line.className = "log-line";
+    line.innerHTML = `<span class="ts">${ts}</span><span class="${level}">${msg}</span>`;
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;   // auto-scroll
+  }
+
+  // ---------- status updaters ----------------------------------------------
+  function setStatus(id, on, label) {
+    document.getElementById("dot-" + id).classList.toggle("on", on);
+    document.getElementById("val-" + id).textContent = label;
+  }
+
+  // ---------- RTCPeerConnection config --------------------------------------
+  // ICE servers help peers behind NATs find each other.
+  // For LAN-only testing you can leave this empty, but it doesn't hurt to
+  // include a public STUN server.
+  const ICE_CONFIG = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+    ],
+  };
+
+  // ---------- main: open connection ----------------------------------------
+  // Called when the user clicks "Connect".
+  async function startConnection() {
+    btnConnect.disabled = true;
+    log("Opening WebSocket to signaling server…", "ok");
+
+    // --- 1. Open WebSocket -------------------------------------------------
+    ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+    ws.onopen = () => {
+      log("WebSocket connected.", "ok");
+      setStatus("ws", true, "connected");
+      // Tell the GStreamer sender we're listening — it won't start the
+      // pipeline (and won't send the SDP offer) until it receives this.
+      ws.send(JSON.stringify({ type: "ready" }));
+      log("Sent 'ready' — waiting for offer…", "ok");
+    };
+
+    ws.onerror = (e) => {
+      log("WebSocket error — is the signaling server running?", "err");
+      setStatus("ws", false, "error");
+    };
+
+    ws.onclose = () => {
+      log("WebSocket closed.", "warn");
+      setStatus("ws", false, "disconnected");
+    };
+
+    // --- 2. Create RTCPeerConnection ---------------------------------------
+    pc = new RTCPeerConnection(ICE_CONFIG);
+
+    // -- 2a. Track received video ------------------------------------------
+    // "ontrack" fires when the remote peer (GStreamer) adds a media track.
+    // We attach it to our <video> element.
+    pc.ontrack = (event) => {
+      log("Video track received — attaching to player.", "ok");
+      video.srcObject = event.streams[0];
+      setStatus("vid", true, "streaming");
+      noSignal.classList.add("hidden");       // hide the "awaiting" overlay
+      osd.style.display = "block";            // show LIVE badge
+      wrapper.classList.add("connected");     // amber glow
+
+      // once we know the video dimensions, show them in the sidebar
+      video.onloadedmetadata = () => {
+        document.getElementById("val-res").textContent =
+          video.videoWidth + "×" + video.videoHeight;
+      };
+    };
+
+    // -- 2b. Send OUR ICE candidates to GStreamer ---------------------------
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        log(`ICE candidate (local): ${event.candidate.candidate.slice(0, 60)}…`, "ok");
+        ws.send(JSON.stringify({
+          type:         "candidate",
+          candidate:    event.candidate.candidate,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+        }));
+      }
+    };
+
+    // -- 2c. Log ICE connection state changes ------------------------------
+    pc.onicestatechange = () => {
+      const state = pc.iceConnectionState;
+      log(`ICE state → ${state}`, state === "connected" || state === "completed" ? "ok" : "warn");
+      setStatus("ice", state === "connected" || state === "completed", state);
+    };
+
+    // --- 3. Handle incoming signals from GStreamer -------------------------
+    ws.onmessage = async (event) => {
+      const signal = JSON.parse(event.data);
+
+      if (signal.type === "offer") {
+        // ---- This is the main event: GStreamer sent us its SDP offer. ----
+        log("SDP offer received from sender.", "ok");
+
+        // Set GStreamer's offer as the remote description
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({ type: "offer", sdp: signal.sdp })
+        );
+
+        // Create our answer and set it as our local description
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // Send the answer back to GStreamer
+        ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+        log("SDP answer sent.", "ok");
+
+      } else if (signal.type === "candidate") {
+        // ---- GStreamer discovered an ICE candidate; add it locally. -----
+        log(`ICE candidate (remote): ${signal.candidate.slice(0, 60)}…`, "ok");
+        await pc.addIceCandidate(
+          new RTCIceCandidate({
+            candidate:    signal.candidate,
+            sdpMLineIndex: signal.sdpMLineIndex,
+          })
+        );
+      }
+    };
+
+    log("Waiting for GStreamer sender to connect…", "warn");
+  }
+
+  // ---------- OSD live-time ticker ------------------------------------------
+  setInterval(() => {
+    if (osd.style.display !== "none") {
+      osdTime.textContent = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    }
+  }, 1000);
+
+  // Make startConnection accessible to the button's onclick
+  window.startConnection = startConnection;
+})();
+</script>
+
+</body>
+</html>
