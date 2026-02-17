@@ -29,10 +29,10 @@ STUN_SERVER = "stun://stun.l.google.com:19302"
 
 # Camera configurations - adjust device paths as needed
 CAMERAS = {
-    "camera1": "/dev/video0",  # First camera
-    "camera2": "/dev/video3",  # Second camera
+    "camera1": "/dev/video6",  # First camera
+    "camera2": "/dev/video10",  # Second camera
     "camera3": "/dev/video2",  # Third camera
-    "camera4": "/dev/video2",  # Fourth camera
+    "camera4": "/dev/video0",  # Fourth camera
 }
 
 
