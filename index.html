@@ -432,6 +432,10 @@
   async function connectAll() {
     btnConnect.disabled = true;
     log("Opening WebSocket...", "info");
+    
+    // Reset status indicators
+    updateStatus("camera1", false, "Connecting...");
+    updateStatus("camera2", false, "Connecting...");
 
     ws = new WebSocket("ws://" + window.location.host + "/ws");
 
@@ -467,16 +471,20 @@
 
     ws.onerror = () => {
       log("WebSocket error", "error");
+      updateStatus("camera1", false, "Error");
+      updateStatus("camera2", false, "Error");
     };
 
     ws.onclose = () => {
       log("WebSocket closed", "info");
+      // Auto-cleanup if connection drops unexpectedly
+      if (btnDisconnect.style.display !== "none") {
+        cleanupConnections();
+      }
     };
   }
 
-  function disconnectAll() {
-    log("Disconnecting...", "info");
-
+  function cleanupConnections() {
     for (const cameraId in cameras) {
       const cam = cameras[cameraId];
       if (cam.pc) {
@@ -488,15 +496,27 @@
       cam.osd.style.display = "none";
       updateStatus(cameraId, false, "Disconnected");
     }
+    
+    btnConnect.disabled = false;
+    btnConnect.style.display = "inline-block";
+    btnDisconnect.style.display = "none";
+  }
+
+  function disconnectAll() {
+    log("Disconnecting...", "info");
+
+    // Send disconnect signal to server
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "disconnect", camera: "camera1" }));
+      ws.send(JSON.stringify({ type: "disconnect", camera: "camera2" }));
+    }
+
+    cleanupConnections();
 
     if (ws) {
       ws.close();
       ws = null;
     }
-
-    btnConnect.disabled = false;
-    btnConnect.style.display = "inline-block";
-    btnDisconnect.style.display = "none";
     
     log("Disconnected", "success");
   }

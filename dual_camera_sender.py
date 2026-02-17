@@ -65,12 +65,21 @@ class CameraStream:
         self.ws = ws
         self.loop = loop  # asyncio event loop
         
-        # Build pipeline
-        self.pipeline, self.webrtcbin = build_pipeline(camera_id, device)
-        
         # State
+        self.pipeline = None
+        self.webrtcbin = None
         self.session_count = 0
         self.offer_created = asyncio.Event()
+        
+        # Build and setup pipeline
+        self._create_pipeline()
+        
+        logger.info(f"[{camera_id}] Pipeline created for {device}")
+    
+    def _create_pipeline(self):
+        """Create or recreate the pipeline."""
+        # Build pipeline
+        self.pipeline, self.webrtcbin = build_pipeline(self.camera_id, self.device)
         
         # Connect signals
         self.webrtcbin.connect("on-negotiation-needed", self.on_negotiation_needed)
@@ -80,8 +89,26 @@ class CameraStream:
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self.on_bus_message)
+    
+    def reset(self):
+        """Reset the pipeline for a new connection."""
+        logger.info(f"[{self.camera_id}] Resetting pipeline for new connection")
         
-        logger.info(f"[{camera_id}] Pipeline created for {device}")
+        # Stop old pipeline
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+        
+        # Recreate pipeline with fresh webrtcbin
+        self._create_pipeline()
+        
+        # Start the new pipeline
+        ret = self.pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            logger.error(f"[{self.camera_id}] Failed to restart pipeline")
+            return False
+        
+        logger.info(f"[{self.camera_id}] Pipeline reset and restarted")
+        return True
     
     def start(self):
         """Start the pipeline."""
@@ -227,12 +254,16 @@ class DualCameraStreamer:
                 logger.info(f"Signal: {sig_type} for {camera_id}")
                 
                 if sig_type == "ready" and camera_id:
-                    # Browser ready for this camera
+                    # Browser ready for this camera - reset pipeline for fresh connection
                     camera = self.cameras.get(camera_id)
                     if camera:
                         camera.session_count += 1
-                        # Trigger negotiation
-                        camera.webrtcbin.emit("on-negotiation-needed")
+                        # Reset pipeline to clear stale WebRTC state (for reconnections)
+                        if camera.session_count > 1:
+                            camera.reset()
+                        else:
+                            # First connection - just trigger negotiation
+                            camera.webrtcbin.emit("on-negotiation-needed")
                 
                 elif sig_type == "answer" and camera_id:
                     camera = self.cameras.get(camera_id)
@@ -246,6 +277,13 @@ class DualCameraStreamer:
                             data["candidate"],
                             data.get("sdpMLineIndex", 0)
                         )
+                
+                elif sig_type == "disconnect" and camera_id:
+                    # Browser disconnected - prepare for reconnection
+                    camera = self.cameras.get(camera_id)
+                    if camera:
+                        logger.info(f"[{camera_id}] Browser disconnected, resetting pipeline")
+                        camera.reset()
             
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 logger.error(f"WebSocket error: {self.ws.exception()}")
