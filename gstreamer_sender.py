@@ -75,7 +75,8 @@ logger = logging.getLogger(__name__)
 # Configuration
 # ---------------------------------------------------------------------------
 SIGNALING_SERVER_URL = "ws://localhost:8080/ws"   # where the signaling server lives
-WEBCAM_DEVICE       = "/dev/video0"               # change if you have multiple webcams
+STUN_SERVER = "stun://stun.l.google.com:19302"   # STUN server for NAT traversal
+WEBCAM_DEVICE       = "/dev/video2"               # change if you have multiple webcams
 
 # ---------------------------------------------------------------------------
 # GStreamer pipeline construction
@@ -122,7 +123,7 @@ def build_pipeline() -> Gst.Pipeline:
 
     # --- webrtcbin (standalone, no links yet) --------------------------------
     webrtcbin = Gst.ElementFactory.make("webrtcbin", "webrtcbin")
-    webrtcbin.set_property("stun-server", "stun://stun.l.google.com:19302")
+    webrtcbin.set_property("stun-server", STUN_SERVER)
     webrtcbin.set_property("bundle-policy", 3)  # 3 = max-bundle
 
     # Add both to the pipeline (but do NOT link — that happens after
@@ -156,7 +157,8 @@ class WebRTCSender:
         self.session = None                       # aiohttp.ClientSession
         self.ws = None                            # aiohttp WebSocket response
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.browser_ready = asyncio.Event()      # set when browser sends "ready"
+        self.browser_ready = asyncio.Event()      # set when browser sends \"ready\"
+        self.session_count = 0                    # increments on each browser connect
 
     # ----- WebSocket connection ---------------------------------------------
     async def connect(self):
@@ -204,7 +206,61 @@ class WebRTCSender:
 
         logger.info("Pipeline and signals configured.")
 
+
+    def reset_webrtc_session(self):
+        """
+        Recreate webrtcbin for a new browser connection. Called on reconnect.
+        The old webrtcbin is removed from the pipeline and a fresh one is
+        created with all signals reconnected. The encoder is paused during
+        the swap to prevent not-linked errors.
+        """
+        logger.info("Recreating webrtcbin for new browser session...")
+        
+        # Pause encoder to prevent it from pushing data while webrtcbin is being swapped
+        self.encoder_bin.set_state(Gst.State.PAUSED)
+        
+        # Remove old webrtcbin from pipeline (this will unlink pads automatically)
+        self.webrtcbin.set_state(Gst.State.NULL)
+        self.pipeline.remove(self.webrtcbin)
+        logger.info("  Removed old webrtcbin from pipeline.")
+        
+        # Create fresh webrtcbin
+        self.webrtcbin = Gst.ElementFactory.make("webrtcbin", "webrtcbin")
+        self.webrtcbin.set_property("bundle-policy", "max-bundle")
+        self.webrtcbin.set_property("stun-server", STUN_SERVER)
+        
+        # Add to pipeline and set to PLAYING
+        self.pipeline.add(self.webrtcbin)
+        self.webrtcbin.sync_state_with_parent()
+        
+        # Reconnect all signals
+        self.webrtcbin.connect("pad-added", self.on_webrtcbin_pad_added)
+        self.webrtcbin.connect("on-negotiation-needed", self.on_negotiation_needed)
+        self.webrtcbin.connect("on-ice-candidate", self.on_ice_candidate)
+        
+        logger.info("  Fresh webrtcbin created and signals reconnected.")
+        
+        # Add transceiver and relink encoder
+        # This happens on GLib thread, and we resume encoder after linking completes
+        GLib.idle_add(self._add_transceiver_and_resume)
+
+
     # ----- GStreamer signal handlers (called by GLib main loop) -------------
+    def _add_transceiver_and_resume(self):
+        """
+        Add transceiver and resume encoder after linking.
+        Used during reconnect to ensure encoder doesn't push data
+        while pads are being relinked.
+        """
+        # Add transceiver (which will trigger pad-added and linking)
+        result = self._add_transceiver()
+        
+        # Resume encoder now that linking is complete
+        self.encoder_bin.set_state(Gst.State.PLAYING)
+        logger.info("  Encoder resumed after relink.")
+        
+        return result
+    
     def _add_transceiver(self):
         """
         Called on the GLib main loop thread via idle_add.
@@ -256,42 +312,64 @@ class WebRTCSender:
 
     def _try_link_encoder(self):
         """
-        Attempt to link the encoder bin's src pad into webrtcbin's sink pad.
-        Returns True if linked successfully, False otherwise.
+        Try to link encoder src -> webrtcbin sink_0.
+        Returns True once linked (or already linked).  False = not ready yet.
+        Called from both the 50 ms poller and the pad-added signal — must be
+        safe against concurrent calls.  PyGObject's Gst.Pad.link() RAISES
+        LinkError instead of returning an enum, so we catch that.
         """
         src_pad = self.encoder_bin.get_static_pad("src")
         if src_pad is None:
             logger.error("Encoder bin has no 'src' ghost pad!")
             return False
 
-        # Check if webrtcbin already has any sink pads (property, not iterator)
-        existing_sinks = self.webrtcbin.sinkpads
-        logger.info(f"  webrtcbin sinkpads: {[(p.get_name(), p.is_linked()) for p in existing_sinks]}")
-
-        sink_pad = None
-        for p in existing_sinks:
-            if not p.is_linked():
-                sink_pad = p
-                break
-
-        # If no unlinked sink pad exists, request one by name
-        if sink_pad is None:
-            logger.info("  Requesting sink_0 via request_pad_simple...")
-            sink_pad = self.webrtcbin.request_pad_simple("sink_0")
-            if sink_pad is not None:
-                logger.info(f"  Got requested pad: {sink_pad.get_name()}")
-            else:
-                logger.info("  request_pad_simple('sink_0') returned None.")
-                return False
-
-        if sink_pad.is_linked():
-            logger.info("  Sink pad already linked.")
+        # Single source of truth: is the encoder already outputting somewhere?
+        if src_pad.is_linked():
+            logger.info("  Encoder src already linked -- ready for offer.")
             return True
 
-        logger.info(f"Linking encoder → {sink_pad.get_name()}...")
-        link_result = src_pad.link(sink_pad)
-        logger.info(f"Pad link result: {link_result}")
-        return link_result == Gst.PadLinkReturn.OK
+        # Look for an unlinked sink pad on webrtcbin
+        sink_pad = None
+        for p in self.webrtcbin.sinkpads:
+            if not p.is_linked():
+                sink_pad = p
+                logger.info(f"  Found unlinked sink pad: {p.get_name()}")
+                break
+
+        # None unlinked -- request one (only if none exist at all)
+        if sink_pad is None:
+            if len(self.webrtcbin.sinkpads) == 0:
+                logger.info("  No sink pads yet -- requesting sink_0...")
+                sink_pad = self.webrtcbin.request_pad_simple("sink_0")
+                if sink_pad is None:
+                    # pad-added may have already fired and linked it
+                    if src_pad.is_linked():
+                        logger.info("  Linked by pad-added while requesting.")
+                        return True
+                    logger.info("  request_pad_simple returned None, will retry.")
+                    return False
+                logger.info(f"  Got pad: {sink_pad.get_name()}")
+            else:
+                # Pads exist but all linked -- we're good
+                logger.info("  All sink pads already linked -- ready for offer.")
+                return True
+
+        # Final race check before link()
+        if src_pad.is_linked():
+            logger.info("  Linked by pad-added just now -- ready for offer.")
+            return True
+
+        logger.info(f"  Linking encoder -> {sink_pad.get_name()}...")
+        try:
+            src_pad.link(sink_pad)
+            logger.info("  Pad linked OK.")
+            return True
+        except Exception as e:
+            if "WAS_LINKED" in str(e):
+                logger.info("  WAS_LINKED (race with pad-added) -- that's fine.")
+                return True
+            logger.error(f"  Link failed: {e}")
+            return False
 
     def on_bus_message(self, bus, message):
         """Log errors and warnings from anywhere inside the pipeline."""
@@ -308,11 +386,11 @@ class WebRTCSender:
 
     def on_webrtcbin_pad_added(self, element, pad):
         """
-        Fired if webrtcbin creates a pad asynchronously.  Just delegate to
-        the same linker — it's idempotent (checks is_linked before linking).
+        Fired when webrtcbin creates a new pad.  Just log it -- the 50 ms
+        poller will pick it up and do the link on its next tick.  Calling
+        _try_link_encoder here too caused a race with the poller.
         """
         logger.info(f"pad-added signal fired: {pad.get_name()}")
-        self._try_link_encoder()
 
     def on_negotiation_needed(self, element):
         """
@@ -382,8 +460,23 @@ class WebRTCSender:
         sig_type = signal.get("type")
 
         if sig_type == "ready":
-            # Browser just connected and is listening — safe to start now.
-            logger.info("Browser is ready.")
+            # Browser connected (or reconnected after refresh).
+            self.session_count += 1
+            logger.info(f"Browser ready (session #{self.session_count}).")
+            
+            if self.session_count == 1:
+                # First connect: start pipeline and add transceiver
+                logger.info("Browser ready — starting pipeline.")
+                ret = self.pipeline.set_state(Gst.State.PLAYING)
+                if ret == Gst.StateChangeReturn.FAILURE:
+                    logger.error("Failed to set pipeline to PLAYING")
+                    return
+                logger.info("Pipeline is PLAYING — webcam should be active.")
+                GLib.idle_add(self._add_transceiver)
+            else:
+                # Reconnect: reset webrtcbin (which calls _add_transceiver internally)
+                self.reset_webrtc_session()
+            # Also unblock run() on the very first connect (no-op after that)
             self.loop.call_soon_threadsafe(self.browser_ready.set)
 
         elif sig_type == "answer":
@@ -472,24 +565,10 @@ class WebRTCSender:
         # the browser's "ready" message.
         listen_task = asyncio.ensure_future(self.listen_for_signals())
 
-        # Wait for the browser to connect and send "ready" before starting
-        # the pipeline.  This prevents the SDP offer from firing before
-        # anyone is listening for it.
+        # Wait for the browser to connect. The ready handler will start the pipeline.
         logger.info("Waiting for browser to connect…")
         await self.browser_ready.wait()
-        logger.info("Browser ready — starting pipeline.")
-
-        # Start the pipeline first — webrtcbin and the GLib loop need to be
-        # live before we add the transceiver.
-        self.pipeline.set_state(Gst.State.PLAYING)
-        logger.info("Pipeline is PLAYING — webcam should be active.")
-
-        # Schedule add-transceiver on the GLib main loop thread via idle_add.
-        # Emitting it from the asyncio thread can cause on-negotiation-needed
-        # to be silently swallowed on GStreamer 1.24.
-        GLib.idle_add(self._add_transceiver)
-        logger.info("Transceiver scheduled on GLib loop — waiting for negotiation.")
-
+        
         # Keep alive
         await listen_task
 

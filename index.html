@@ -3,13 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>ROVER — Live Feed</title>
+<title>Dual Camera Feed</title>
 <style>
-  /* ------------------------------------------------------------------ */
-  /*  Design direction: industrial telemetry / mission-control aesthetic  */
-  /*  Monospace type, scanline texture, amber accent on dark ground.     */
-  /* ------------------------------------------------------------------ */
-
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600&display=swap');
 
   :root {
@@ -27,17 +22,17 @@
     --font-ui:     'Rajdhani', sans-serif;
   }
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
 
-  html, body {
-    height: 100%;
+  body {
+    min-height: 100vh;
     background: var(--bg-deep);
     color: var(--text-primary);
     font-family: var(--font-mono);
-    overflow: hidden;                       /* full-viewport layout */
+    padding: 20px;
   }
 
-  /* ---- scanline overlay (pure CSS — no image needed) -------------------- */
+  /* Scanline overlay */
   body::after {
     content: '';
     position: fixed; inset: 0;
@@ -52,493 +47,473 @@
     z-index: 999;
   }
 
-  /* ---- layout grid ------------------------------------------------------ */
-  .layout {
-    display: grid;
-    grid-template-columns: 240px 1fr;
-    grid-template-rows: 48px 1fr;
-    height: 100vh;
-    gap: 1px;
-    background: var(--border);              /* the 1px gaps show as borders */
+  .header {
+    text-align: center;
+    margin-bottom: 30px;
   }
 
-  /* ---- top bar ---------------------------------------------------------- */
-  .topbar {
-    grid-column: 1 / -1;
-    background: var(--bg-panel);
-    display: flex;
-    align-items: center;
-    padding: 0 24px;
-    gap: 16px;
-  }
-  .topbar .logo-mark {
-    width: 28px; height: 28px;
-    border: 2px solid var(--accent);
-    border-radius: 4px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 700;
+  .header h1 {
+    font-family: var(--font-ui);
+    font-weight: 600;
+    font-size: 28px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
     color: var(--accent);
-    letter-spacing: 1px;
-  }
-  .topbar h1 {
-    font-family: var(--font-ui);
-    font-weight: 600;
-    font-size: 18px;
-    letter-spacing: 3px;
-    text-transform: uppercase;
-    color: var(--text-primary);
-  }
-  .topbar .spacer { flex: 1; }
-  .topbar .clock {
-    font-size: 13px;
-    color: var(--text-dim);
-    letter-spacing: 1px;
   }
 
-  /* ---- sidebar (telemetry panel) --------------------------------------- */
-  .sidebar {
+  .camera-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+    gap: 30px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  .camera-card {
     background: var(--bg-panel);
-    padding: 20px 16px;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
   }
 
-  .sidebar-section-title {
-    font-family: var(--font-ui);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 2.5px;
-    text-transform: uppercase;
-    color: var(--accent-dim);
-    margin-bottom: 8px;
-    padding-bottom: 4px;
+  .camera-header {
+    padding: 15px 20px;
+    background: var(--bg-inset);
     border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
   }
 
-  /* status row: label + dot + value */
-  .status-row {
+  .camera-title {
+    font-family: var(--font-ui);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .status-indicator {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 5px 0;
     font-size: 12px;
   }
-  .status-row .label {
-    color: var(--text-dim);
-    width: 90px;
-    flex-shrink: 0;
-  }
+
   .status-dot {
-    width: 8px; height: 8px;
+    width: 10px;
+    height: 10px;
     border-radius: 50%;
     background: var(--status-off);
     transition: background .3s;
   }
-  .status-dot.on { background: var(--status-on); box-shadow: 0 0 6px var(--status-on); }
-  .status-row .value {
-    color: var(--text-primary);
-    font-size: 11px;
+
+  .status-dot.connected {
+    background: var(--status-on);
+    box-shadow: 0 0 10px var(--status-on);
   }
 
-  /* log terminal */
-  .log-box {
-    background: var(--bg-inset);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    height: 140px;
-    overflow-y: auto;
-    padding: 8px 10px;
-    font-size: 11px;
-    line-height: 1.55;
-    color: var(--text-dim);
+  .video-container {
+    position: relative;
+    background: #000;
+    aspect-ratio: 4/3;
   }
-  .log-box .log-line { margin-bottom: 2px; }
-  .log-box .log-line .ts { color: var(--accent-dim); margin-right: 6px; }
-  .log-box .log-line .ok { color: var(--status-on); }
-  .log-box .log-line .warn { color: var(--accent); }
-  .log-box .log-line .err { color: var(--status-off); }
 
-  /* ---- main video area -------------------------------------------------- */
-  .main {
-    background: var(--bg-deep);
+  video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .no-signal {
+    position: absolute;
+    inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    position: relative;
-    overflow: hidden;
+    gap: 15px;
+    background: rgba(10,14,20,.95);
+    transition: opacity .3s;
   }
 
-  /* faint corner brackets */
-  .main::before, .main::after {
-    content: '';
-    position: absolute;
-    width: 40px; height: 40px;
-    border-color: var(--accent-dim);
-    border-style: solid;
-    opacity: .35;
+  .no-signal.hidden {
+    opacity: 0;
     pointer-events: none;
   }
-  .main::before { top: 16px; left: 16px; border-width: 2px 0 0 2px; }
-  .main::after  { bottom: 16px; right: 16px; border-width: 0 2px 2px 0; }
 
-  .video-wrapper {
-    position: relative;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    overflow: hidden;
-    background: #000;
-    /* subtle amber glow when connected */
-    transition: box-shadow .4s;
-  }
-  .video-wrapper.connected {
-    box-shadow: 0 0 24px rgba(232,160,37,.15);
+  .no-signal .icon {
+    font-size: 48px;
+    opacity: .4;
   }
 
-  video {
-    display: block;
-    width: 100%;
-    max-width: 960px;
-    max-height: 70vh;
-    background: #000;
-  }
-
-  /* placeholder shown before stream arrives */
-  .no-signal {
-    position: absolute; inset: 0;
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    gap: 10px;
-    background: rgba(10,14,20,.92);
-    transition: opacity .4s;
-    z-index: 2;
-  }
-  .no-signal.hidden { opacity: 0; pointer-events: none; }
-  .no-signal .icon { font-size: 48px; opacity: .4; }
   .no-signal span {
-    font-family: var(--font-ui);
-    font-size: 15px;
+    font-size: 14px;
     letter-spacing: 2px;
     text-transform: uppercase;
     color: var(--text-dim);
   }
 
-  /* OSD stamp on video */
   .osd {
     position: absolute;
-    bottom: 12px; left: 16px;
+    bottom: 12px;
+    left: 16px;
     font-size: 11px;
-    color: rgba(212,220,232,.7);
+    color: rgba(212,220,232,.8);
     text-shadow: 0 1px 3px rgba(0,0,0,.8);
     pointer-events: none;
-    z-index: 3;
-  }
-  .osd .live-badge {
-    display: inline-block;
-    background: var(--status-off);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 1.5px;
-    padding: 2px 6px;
-    border-radius: 3px;
-    margin-right: 8px;
-    vertical-align: middle;
   }
 
-  /* ---- connect button --------------------------------------------------- */
-  .btn-connect {
-    margin-top: 20px;
+  .live-badge {
+    display: inline-block;
+    background: var(--status-on);
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    margin-right: 8px;
+  }
+
+  .controls {
+    padding: 20px;
+    text-align: center;
+  }
+
+  .btn {
+    background: var(--accent);
+    color: var(--bg-deep);
+    border: none;
+    padding: 12px 32px;
     font-family: var(--font-ui);
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
     letter-spacing: 2px;
     text-transform: uppercase;
-    background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    padding: 8px 28px;
     border-radius: 4px;
     cursor: pointer;
-    transition: background .2s, color .2s;
+    transition: all .3s;
   }
-  .btn-connect:hover {
-    background: var(--accent);
-    color: var(--bg-deep);
+
+  .btn:hover {
+    background: var(--text-primary);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(232,160,37,.3);
   }
-  .btn-connect:disabled {
-    opacity: .35;
-    cursor: default;
+
+  .btn:disabled {
+    opacity: .5;
+    cursor: not-allowed;
   }
+
+  .btn.disconnect {
+    background: var(--status-off);
+    margin-left: 12px;
+  }
+
+  .btn.disconnect:hover {
+    background: #ff6b6b;
+  }
+
+  .log-section {
+    max-width: 1400px;
+    margin: 30px auto 0;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px;
+  }
+
+  .log-title {
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--accent-dim);
+    margin-bottom: 12px;
+  }
+
+  .log-box {
+    background: var(--bg-inset);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    height: 150px;
+    overflow-y: auto;
+    padding: 10px;
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .log-line {
+    margin-bottom: 2px;
+  }
+
+  .log-line .ts {
+    color: var(--accent-dim);
+    margin-right: 8px;
+  }
+
+  .log-line.info { color: var(--text-dim); }
+  .log-line.success { color: var(--status-on); }
+  .log-line.error { color: var(--status-off); }
 </style>
 </head>
 <body>
 
-<!-- ====================================================================
-     LAYOUT
-     ==================================================================== -->
-<div class="layout">
+<div class="header">
+  <h1>⬢ Dual Camera System</h1>
+</div>
 
-  <!-- top bar -->
-  <div class="topbar">
-    <div class="logo-mark">R</div>
-    <h1>Rover Telemetry</h1>
-    <div class="spacer"></div>
-    <div class="clock" id="clock">--:--:--</div>
-  </div>
-
-  <!-- sidebar -->
-  <aside class="sidebar">
-    <div>
-      <div class="sidebar-section-title">Connection</div>
-      <div class="status-row">
-        <span class="label">WebSocket</span>
-        <span class="status-dot" id="dot-ws"></span>
-        <span class="value" id="val-ws">disconnected</span>
-      </div>
-      <div class="status-row">
-        <span class="label">ICE</span>
-        <span class="status-dot" id="dot-ice"></span>
-        <span class="value" id="val-ice">—</span>
-      </div>
-      <div class="status-row">
-        <span class="label">Video</span>
-        <span class="status-dot" id="dot-vid"></span>
-        <span class="value" id="val-vid">no signal</span>
+<div class="camera-grid">
+  <!-- Camera 1 -->
+  <div class="camera-card">
+    <div class="camera-header">
+      <div class="camera-title">Camera 1</div>
+      <div class="status-indicator">
+        <span class="status-dot" id="status-cam1"></span>
+        <span id="status-text-cam1">Disconnected</span>
       </div>
     </div>
-
-    <div>
-      <div class="sidebar-section-title">Stream Info</div>
-      <div class="status-row">
-        <span class="label">Resolution</span>
-        <span class="value" id="val-res">—</span>
-      </div>
-      <div class="status-row">
-        <span class="label">Codec</span>
-        <span class="value">H.264</span>
-      </div>
-      <div class="status-row">
-        <span class="label">Transport</span>
-        <span class="value">WebRTC / UDP</span>
-      </div>
-    </div>
-
-    <div>
-      <div class="sidebar-section-title">Event Log</div>
-      <div class="log-box" id="log-box"></div>
-    </div>
-  </aside>
-
-  <!-- main video area -->
-  <main class="main">
-    <div class="video-wrapper" id="video-wrapper">
-      <video id="video" autoplay playsinline muted></video>
-      <div class="no-signal" id="no-signal">
+    <div class="video-container">
+      <video id="video-cam1" autoplay playsinline muted></video>
+      <div class="no-signal" id="no-signal-cam1">
         <div class="icon">⬡</div>
         <span>Awaiting signal</span>
       </div>
-      <div class="osd" id="osd" style="display:none;">
+      <div class="osd" id="osd-cam1" style="display:none;">
         <span class="live-badge">LIVE</span>
-        <span id="osd-time"></span>
+        <span id="osd-time-cam1"></span>
       </div>
     </div>
-    <button class="btn-connect" id="btn-connect" onclick="startConnection()">Connect</button>
-  </main>
+  </div>
+
+  <!-- Camera 2 -->
+  <div class="camera-card">
+    <div class="camera-header">
+      <div class="camera-title">Camera 2</div>
+      <div class="status-indicator">
+        <span class="status-dot" id="status-cam2"></span>
+        <span id="status-text-cam2">Disconnected</span>
+      </div>
+    </div>
+    <div class="video-container">
+      <video id="video-cam2" autoplay playsinline muted></video>
+      <div class="no-signal" id="no-signal-cam2">
+        <div class="icon">⬡</div>
+        <span>Awaiting signal</span>
+      </div>
+      <div class="osd" id="osd-cam2" style="display:none;">
+        <span class="live-badge">LIVE</span>
+        <span id="osd-time-cam2"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
-<!-- ====================================================================
-     JAVASCRIPT — WebRTC consumer + signaling client
-     ====================================================================
-     What this code does (step by step):
+<div class="controls">
+  <button class="btn" id="btn-connect" onclick="connectAll()">Connect Both Cameras</button>
+  <button class="btn disconnect" id="btn-disconnect" onclick="disconnectAll()" style="display:none;">Disconnect</button>
+</div>
 
-     1. Opens a WebSocket to the signaling server (/ws).
-     2. Creates a local RTCPeerConnection (the browser's WebRTC engine).
-     3. Waits for the GStreamer sender to push an SDP "offer" through the
-        WebSocket.
-     4. Sets that offer as the REMOTE description on our peer connection.
-     5. Creates an SDP "answer" and sets it as OUR local description.
-     6. Sends the answer back through the WebSocket to GStreamer.
-     7. ICE candidates flow both ways through the WebSocket until a
-        working network path is found.
-     8. Once the peer connection is established, the browser receives an
-        RTP video track which we attach to the <video> element.
+<div class="log-section">
+  <div class="log-title">Event Log</div>
+  <div class="log-box" id="log-box"></div>
+</div>
 
-     Why does the browser create an ANSWER (not an offer)?
-        In WebRTC there are two roles: "offerer" and "answerer".
-        GStreamer is the offerer because it has the media.  The browser
-        is the answerer — it accepts the offer and replies.
-        The roles determine how the SDP is structured and how DTLS
-        roles are assigned.  It doesn't matter for functionality; it's
-        a protocol convention.
-     ==================================================================== -->
 <script>
-(function () {
+(function() {
   "use strict";
 
-  // ---------- references to DOM elements ----------
-  const video      = document.getElementById("video");
-  const noSignal   = document.getElementById("no-signal");
-  const osd        = document.getElementById("osd");
-  const osdTime    = document.getElementById("osd-time");
-  const wrapper    = document.getElementById("video-wrapper");
-  const btnConnect = document.getElementById("btn-connect");
-  const logBox     = document.getElementById("log-box");
-
-  // ---------- state ----------
-  let ws = null;                              // WebSocket connection
-  let pc = null;                              // RTCPeerConnection
-
-  // ---------- clock (top-right) ----------
-  (function tickClock() {
-    document.getElementById("clock").textContent =
-      new Date().toLocaleTimeString("en-GB", { hour12: false });
-    setInterval(tickClock, 1000);
-  })();
-
-  // ---------- logging helper -----------------------------------------------
-  // Appends a line to the on-screen log AND prints to the browser console.
-  function log(msg, level = "ok") {
-    console.log(`[ROVER] ${msg}`);
-    const ts   = new Date().toLocaleTimeString("en-GB", { hour12: false });
-    const line = document.createElement("div");
-    line.className = "log-line";
-    line.innerHTML = `<span class="ts">${ts}</span><span class="${level}">${msg}</span>`;
-    logBox.appendChild(line);
-    logBox.scrollTop = logBox.scrollHeight;   // auto-scroll
-  }
-
-  // ---------- status updaters ----------------------------------------------
-  function setStatus(id, on, label) {
-    document.getElementById("dot-" + id).classList.toggle("on", on);
-    document.getElementById("val-" + id).textContent = label;
-  }
-
-  // ---------- RTCPeerConnection config --------------------------------------
-  // ICE servers help peers behind NATs find each other.
-  // For LAN-only testing you can leave this empty, but it doesn't hurt to
-  // include a public STUN server.
   const ICE_CONFIG = {
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-    ],
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
   };
 
-  // ---------- main: open connection ----------------------------------------
-  // Called when the user clicks "Connect".
-  async function startConnection() {
-    btnConnect.disabled = true;
-    log("Opening WebSocket to signaling server…", "ok");
+  let ws = null;
+  const cameras = {
+    camera1: {
+      id: "camera1",
+      pc: null,
+      video: document.getElementById("video-cam1"),
+      noSignal: document.getElementById("no-signal-cam1"),
+      osd: document.getElementById("osd-cam1"),
+      osdTime: document.getElementById("osd-time-cam1"),
+      statusDot: document.getElementById("status-cam1"),
+      statusText: document.getElementById("status-text-cam1")
+    },
+    camera2: {
+      id: "camera2",
+      pc: null,
+      video: document.getElementById("video-cam2"),
+      noSignal: document.getElementById("no-signal-cam2"),
+      osd: document.getElementById("osd-cam2"),
+      osdTime: document.getElementById("osd-time-cam2"),
+      statusDot: document.getElementById("status-cam2"),
+      statusText: document.getElementById("status-text-cam2")
+    }
+  };
 
-    // --- 1. Open WebSocket -------------------------------------------------
-    ws = new WebSocket("ws://" + window.location.host + "/ws");
+  const logBox = document.getElementById("log-box");
+  const btnConnect = document.getElementById("btn-connect");
+  const btnDisconnect = document.getElementById("btn-disconnect");
 
-    ws.onopen = () => {
-      log("WebSocket connected.", "ok");
-      setStatus("ws", true, "connected");
-      // Tell the GStreamer sender we're listening — it won't start the
-      // pipeline (and won't send the SDP offer) until it receives this.
-      ws.send(JSON.stringify({ type: "ready" }));
-      log("Sent 'ready' — waiting for offer…", "ok");
+  function log(msg, level = "info") {
+    console.log(`[DUAL-CAM] ${msg}`);
+    const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const line = document.createElement("div");
+    line.className = `log-line ${level}`;
+    line.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  function updateStatus(cameraId, connected, text) {
+    const cam = cameras[cameraId];
+    cam.statusDot.classList.toggle("connected", connected);
+    cam.statusText.textContent = text;
+  }
+
+  function setupPeerConnection(cameraId) {
+    const cam = cameras[cameraId];
+    cam.pc = new RTCPeerConnection(ICE_CONFIG);
+
+    cam.pc.ontrack = (event) => {
+      log(`${cameraId}: Video track received`, "success");
+      cam.video.srcObject = event.streams[0];
+      cam.noSignal.classList.add("hidden");
+      cam.osd.style.display = "block";
+      updateStatus(cameraId, true, "Streaming");
     };
 
-    ws.onerror = (e) => {
-      log("WebSocket error — is the signaling server running?", "err");
-      setStatus("ws", false, "error");
-    };
-
-    ws.onclose = () => {
-      log("WebSocket closed.", "warn");
-      setStatus("ws", false, "disconnected");
-    };
-
-    // --- 2. Create RTCPeerConnection ---------------------------------------
-    pc = new RTCPeerConnection(ICE_CONFIG);
-
-    // -- 2a. Track received video ------------------------------------------
-    // "ontrack" fires when the remote peer (GStreamer) adds a media track.
-    // We attach it to our <video> element.
-    pc.ontrack = (event) => {
-      log("Video track received — attaching to player.", "ok");
-      video.srcObject = event.streams[0];
-      setStatus("vid", true, "streaming");
-      noSignal.classList.add("hidden");       // hide the "awaiting" overlay
-      osd.style.display = "block";            // show LIVE badge
-      wrapper.classList.add("connected");     // amber glow
-
-      // once we know the video dimensions, show them in the sidebar
-      video.onloadedmetadata = () => {
-        document.getElementById("val-res").textContent =
-          video.videoWidth + "×" + video.videoHeight;
-      };
-    };
-
-    // -- 2b. Send OUR ICE candidates to GStreamer ---------------------------
-    pc.onicecandidate = (event) => {
+    cam.pc.onicecandidate = (event) => {
       if (event.candidate) {
-        log(`ICE candidate (local): ${event.candidate.candidate.slice(0, 60)}…`, "ok");
         ws.send(JSON.stringify({
-          type:         "candidate",
-          candidate:    event.candidate.candidate,
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
+          type: "candidate",
+          camera: cameraId,
+          candidate: event.candidate.candidate,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
         }));
       }
     };
 
-    // -- 2c. Log ICE connection state changes ------------------------------
-    pc.onicestatechange = () => {
-      const state = pc.iceConnectionState;
-      log(`ICE state → ${state}`, state === "connected" || state === "completed" ? "ok" : "warn");
-      setStatus("ice", state === "connected" || state === "completed", state);
+    cam.pc.oniceconnectionstatechange = () => {
+      log(`${cameraId}: ICE state → ${cam.pc.iceConnectionState}`, "info");
+    };
+  }
+
+  async function handleOffer(cameraId, sdp) {
+    const cam = cameras[cameraId];
+    log(`${cameraId}: Received offer`, "info");
+
+    await cam.pc.setRemoteDescription(new RTCSessionDescription({ type: "offer", sdp }));
+    const answer = await cam.pc.createAnswer();
+    await cam.pc.setLocalDescription(answer);
+
+    ws.send(JSON.stringify({
+      type: "answer",
+      camera: cameraId,
+      sdp: answer.sdp
+    }));
+
+    log(`${cameraId}: Answer sent`, "success");
+  }
+
+  async function handleCandidate(cameraId, candidate, sdpMLineIndex) {
+    const cam = cameras[cameraId];
+    if (candidate) {
+      await cam.pc.addIceCandidate(new RTCIceCandidate({
+        candidate,
+        sdpMLineIndex
+      }));
+    }
+  }
+
+  async function connectAll() {
+    btnConnect.disabled = true;
+    log("Opening WebSocket...", "info");
+
+    ws = new WebSocket("ws://" + window.location.host + "/ws");
+
+    ws.onopen = () => {
+      log("WebSocket connected", "success");
+      
+      // Setup peer connections for both cameras
+      setupPeerConnection("camera1");
+      setupPeerConnection("camera2");
+
+      // Signal ready for both cameras
+      ws.send(JSON.stringify({ type: "ready", camera: "camera1" }));
+      ws.send(JSON.stringify({ type: "ready", camera: "camera2" }));
+
+      log("Sent ready signals for both cameras", "info");
+      
+      btnConnect.style.display = "none";
+      btnDisconnect.style.display = "inline-block";
     };
 
-    // --- 3. Handle incoming signals from GStreamer -------------------------
     ws.onmessage = async (event) => {
       const signal = JSON.parse(event.data);
+      const cameraId = signal.camera;
+
+      if (!cameraId || !cameras[cameraId]) return;
 
       if (signal.type === "offer") {
-        // ---- This is the main event: GStreamer sent us its SDP offer. ----
-        log("SDP offer received from sender.", "ok");
-
-        // Set GStreamer's offer as the remote description
-        await pc.setRemoteDescription(
-          new RTCSessionDescription({ type: "offer", sdp: signal.sdp })
-        );
-
-        // Create our answer and set it as our local description
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        // Send the answer back to GStreamer
-        ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
-        log("SDP answer sent.", "ok");
-
+        await handleOffer(cameraId, signal.sdp);
       } else if (signal.type === "candidate") {
-        // ---- GStreamer discovered an ICE candidate; add it locally. -----
-        log(`ICE candidate (remote): ${signal.candidate.slice(0, 60)}…`, "ok");
-        await pc.addIceCandidate(
-          new RTCIceCandidate({
-            candidate:    signal.candidate,
-            sdpMLineIndex: signal.sdpMLineIndex,
-          })
-        );
+        await handleCandidate(cameraId, signal.candidate, signal.sdpMLineIndex);
       }
     };
 
-    log("Waiting for GStreamer sender to connect…", "warn");
+    ws.onerror = () => {
+      log("WebSocket error", "error");
+    };
+
+    ws.onclose = () => {
+      log("WebSocket closed", "info");
+    };
   }
 
-  // ---------- OSD live-time ticker ------------------------------------------
+  function disconnectAll() {
+    log("Disconnecting...", "info");
+
+    for (const cameraId in cameras) {
+      const cam = cameras[cameraId];
+      if (cam.pc) {
+        cam.pc.close();
+        cam.pc = null;
+      }
+      cam.video.srcObject = null;
+      cam.noSignal.classList.remove("hidden");
+      cam.osd.style.display = "none";
+      updateStatus(cameraId, false, "Disconnected");
+    }
+
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+
+    btnConnect.disabled = false;
+    btnConnect.style.display = "inline-block";
+    btnDisconnect.style.display = "none";
+    
+    log("Disconnected", "success");
+  }
+
+  // Update OSD time
   setInterval(() => {
-    if (osd.style.display !== "none") {
-      osdTime.textContent = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    const time = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    for (const cameraId in cameras) {
+      const cam = cameras[cameraId];
+      if (cam.osd.style.display !== "none") {
+        cam.osdTime.textContent = time;
+      }
     }
   }, 1000);
 
-  // Make startConnection accessible to the button's onclick
-  window.startConnection = startConnection;
+  window.connectAll = connectAll;
+  window.disconnectAll = disconnectAll;
 })();
 </script>
 
