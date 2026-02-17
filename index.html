@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Dual Camera Feed</title>
+<title>Quad Camera Feed</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Rajdhani:wght@300;400;500;600&display=swap');
 
@@ -63,10 +63,16 @@
 
   .camera-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-    gap: 30px;
-    max-width: 1400px;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    max-width: 1600px;
     margin: 0 auto;
+  }
+
+  @media (max-width: 1000px) {
+    .camera-grid {
+      grid-template-columns: 1fr;
+    }
   }
 
   .camera-card {
@@ -263,7 +269,7 @@
 <body>
 
 <div class="header">
-  <h1>⬢ Dual Camera System</h1>
+  <h1>⬢ Quad Camera System</h1>
 </div>
 
 <div class="camera-grid">
@@ -310,10 +316,54 @@
       </div>
     </div>
   </div>
+
+  <!-- Camera 3 -->
+  <div class="camera-card">
+    <div class="camera-header">
+      <div class="camera-title">Camera 3</div>
+      <div class="status-indicator">
+        <span class="status-dot" id="status-cam3"></span>
+        <span id="status-text-cam3">Disconnected</span>
+      </div>
+    </div>
+    <div class="video-container">
+      <video id="video-cam3" autoplay playsinline muted></video>
+      <div class="no-signal" id="no-signal-cam3">
+        <div class="icon">⬡</div>
+        <span>Awaiting signal</span>
+      </div>
+      <div class="osd" id="osd-cam3" style="display:none;">
+        <span class="live-badge">LIVE</span>
+        <span id="osd-time-cam3"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Camera 4 -->
+  <div class="camera-card">
+    <div class="camera-header">
+      <div class="camera-title">Camera 4</div>
+      <div class="status-indicator">
+        <span class="status-dot" id="status-cam4"></span>
+        <span id="status-text-cam4">Disconnected</span>
+      </div>
+    </div>
+    <div class="video-container">
+      <video id="video-cam4" autoplay playsinline muted></video>
+      <div class="no-signal" id="no-signal-cam4">
+        <div class="icon">⬡</div>
+        <span>Awaiting signal</span>
+      </div>
+      <div class="osd" id="osd-cam4" style="display:none;">
+        <span class="live-badge">LIVE</span>
+        <span id="osd-time-cam4"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="controls">
-  <button class="btn" id="btn-connect" onclick="connectAll()">Connect Both Cameras</button>
+  <button class="btn" id="btn-connect" onclick="connectAll()">Connect All Cameras</button>
   <button class="btn disconnect" id="btn-disconnect" onclick="disconnectAll()" style="display:none;">Disconnect</button>
 </div>
 
@@ -351,6 +401,26 @@
       osdTime: document.getElementById("osd-time-cam2"),
       statusDot: document.getElementById("status-cam2"),
       statusText: document.getElementById("status-text-cam2")
+    },
+    camera3: {
+      id: "camera3",
+      pc: null,
+      video: document.getElementById("video-cam3"),
+      noSignal: document.getElementById("no-signal-cam3"),
+      osd: document.getElementById("osd-cam3"),
+      osdTime: document.getElementById("osd-time-cam3"),
+      statusDot: document.getElementById("status-cam3"),
+      statusText: document.getElementById("status-text-cam3")
+    },
+    camera4: {
+      id: "camera4",
+      pc: null,
+      video: document.getElementById("video-cam4"),
+      noSignal: document.getElementById("no-signal-cam4"),
+      osd: document.getElementById("osd-cam4"),
+      osdTime: document.getElementById("osd-time-cam4"),
+      statusDot: document.getElementById("status-cam4"),
+      statusText: document.getElementById("status-text-cam4")
     }
   };
 
@@ -359,7 +429,7 @@
   const btnDisconnect = document.getElementById("btn-disconnect");
 
   function log(msg, level = "info") {
-    console.log(`[DUAL-CAM] ${msg}`);
+    console.log(`[QUAD-CAM] ${msg}`);
     const ts = new Date().toLocaleTimeString("en-GB", { hour12: false });
     const line = document.createElement("div");
     line.className = `log-line ${level}`;
@@ -433,24 +503,30 @@
     btnConnect.disabled = true;
     log("Opening WebSocket...", "info");
     
-    // Reset status indicators
+    // Reset status indicators for all cameras
     updateStatus("camera1", false, "Connecting...");
     updateStatus("camera2", false, "Connecting...");
+    updateStatus("camera3", false, "Connecting...");
+    updateStatus("camera4", false, "Connecting...");
 
     ws = new WebSocket("ws://" + window.location.host + "/ws");
 
     ws.onopen = () => {
       log("WebSocket connected", "success");
       
-      // Setup peer connections for both cameras
+      // Setup peer connections for all cameras
       setupPeerConnection("camera1");
       setupPeerConnection("camera2");
+      setupPeerConnection("camera3");
+      setupPeerConnection("camera4");
 
-      // Signal ready for both cameras
+      // Signal ready for all cameras
       ws.send(JSON.stringify({ type: "ready", camera: "camera1" }));
       ws.send(JSON.stringify({ type: "ready", camera: "camera2" }));
+      ws.send(JSON.stringify({ type: "ready", camera: "camera3" }));
+      ws.send(JSON.stringify({ type: "ready", camera: "camera4" }));
 
-      log("Sent ready signals for both cameras", "info");
+      log("Sent ready signals for all cameras", "info");
       
       btnConnect.style.display = "none";
       btnDisconnect.style.display = "inline-block";
@@ -505,10 +581,12 @@
   function disconnectAll() {
     log("Disconnecting...", "info");
 
-    // Send disconnect signal to server
+    // Send disconnect signal to server for all cameras
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "disconnect", camera: "camera1" }));
       ws.send(JSON.stringify({ type: "disconnect", camera: "camera2" }));
+      ws.send(JSON.stringify({ type: "disconnect", camera: "camera3" }));
+      ws.send(JSON.stringify({ type: "disconnect", camera: "camera4" }));
     }
 
     cleanupConnections();

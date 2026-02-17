@@ -1,7 +1,7 @@
 """
-DUAL CAMERA GSTREAMER + WEBRTC SYSTEM
+QUAD CAMERA GSTREAMER + WEBRTC SYSTEM
 ======================================
-Streams two cameras simultaneously to the browser.
+Streams four cameras simultaneously to the browser.
 Each camera has its own pipeline and webrtcbin instance.
 """
 
@@ -31,6 +31,8 @@ STUN_SERVER = "stun://stun.l.google.com:19302"
 CAMERAS = {
     "camera1": "/dev/video0",  # First camera
     "camera2": "/dev/video3",  # Second camera
+    "camera3": "/dev/video2",  # Third camera
+    "camera4": "/dev/video2",  # Fourth camera
 }
 
 
